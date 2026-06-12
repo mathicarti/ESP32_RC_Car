@@ -3,6 +3,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+const int 
+
 void app_main(void)
 {
     gpio_set_direction(GPIO_NUM_12, GPIO_MODE_OUTPUT);
