@@ -1,0 +1,6 @@
+-Wno-frame-address
+-mlongcalls
+-fno-builtin-memcpy
+-fno-builtin-memset
+-fno-builtin-bzero
+"-specs=/Users/mathieucartier/01 Projects/RC Car/Code/esp32_firmware/controller/build/specs/picolibc.specs"
