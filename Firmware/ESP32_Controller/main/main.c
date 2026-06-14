@@ -15,16 +15,16 @@ static const char *TAG = "ESP_OUT";
 
 static uint8_t peer_mac[ESP_NOW_ETH_ALEN] = {0xD8, 0xBC, 0x38, 0xFC, 0xB1, 0x78};
 
-void on_data_send(const esp_now_send_info_t *rcv_info, esp_now_send_status_t status)
+void on_data_send(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
 {
-    ESP_LOGI(TAG, "Delivery Status: %s", rcv_info->tx_status == WIFI_SEND_SUCCESS ? "Success" : "Fail");
+    ESP_LOGI(TAG, "Delivery Status: %s", tx_info->tx_status == WIFI_SEND_SUCCESS ? "Success" : "Fail");
 }
 
-void on_data_recv(const esp_now_recv_info_t *src_info, const uint8_t *data, int len)
+void on_data_recv(const esp_now_recv_info_t * esp_now_info, const uint8_t *data, int data_len)
 {
-    const uint8_t *src_mac = src_info->src_addr;
+    const uint8_t *src_mac = esp_now_info->src_addr;
     ESP_LOGI(TAG, "Received %d bytes, from MAC %02X:%02X:%02X:%02X:%02X:%02X", 
-        len, src_mac[0], src_mac[1], src_mac[2], src_mac[3], src_mac[4], src_mac[5]);
+        data_len, src_mac[0], src_mac[1], src_mac[2], src_mac[3], src_mac[4], src_mac[5]);
 }
 
 static void init_wifi(void)
