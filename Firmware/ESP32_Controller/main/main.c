@@ -13,7 +13,7 @@ static void blink_LED(const gpio_num_t GPIO_NUM, const int count);
 
 static const char *TAG = "ESP_OUT";
 
-static uint8_t peer_mac[ESP_NOW_ETH_ALEN] = {0xD8, 0xBC, 0x38, 0xFC, 0xB1, 0x78};
+static uint8_t peer_mac[ESP_NOW_ETH_ALEN] = {0xd8, 0xbc, 0x38, 0xfc, 0xb1, 0x78};
 
 void on_data_send(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
 {
@@ -54,13 +54,13 @@ static void init_esp_now(void)
 
     // add peers
     esp_now_peer_info_t peer = {
-        .channel = 0,
+        .channel = 1,
         .ifidx = WIFI_IF_STA,
         .encrypt = false,
     };
     memcpy(peer.peer_addr, peer_mac, ESP_NOW_ETH_ALEN);
 
-    esp_now_add_peer(&peer);
+    ESP_ERROR_CHECK(esp_now_add_peer(&peer));
 }
 
 void app_main(void)
@@ -86,31 +86,21 @@ void app_main(void)
 
         if (result == ESP_OK)
         {
-            ESP_LOGI(TAG, "Data sent awating callback");
+            // ESP_LOGI(TAG, "Data sent awating callback");
             blink_LED(GPIO_NUM_12, 2);
-        }
-
-        else if (result == ESP_ERR_ESPNOW_ARG)
+        } else if (result == ESP_ERR_ESPNOW_ARG)
         {
             ESP_LOGE(TAG, "Invalide arguments passed");
-        }
-
-        else if (result == ESP_ERR_ESPNOW_NOT_INIT)
+        } else if (result == ESP_ERR_ESPNOW_NOT_INIT)
         {
             ESP_LOGE(TAG, "ESP NOW not initialised properly");
-        }
-
-        else if (result == ESP_ERR_ESPNOW_NOT_FOUND)
+        } else if (result == ESP_ERR_ESPNOW_NOT_FOUND)
         {
             ESP_LOGE(TAG, "Couldn't find peer");
-        }
-
-        else if (result == ESP_ERR_ESPNOW_IF)
+        } else if (result == ESP_ERR_ESPNOW_IF)
         {
             ESP_LOGE(TAG, "WiFi interface mismatch");
-        }
-
-        else if (result == ESP_ERR_ESPNOW_CHAN)
+        } else if (result == ESP_ERR_ESPNOW_CHAN)
         {
             ESP_LOGE(TAG, "Peer on wrong channel");
         }

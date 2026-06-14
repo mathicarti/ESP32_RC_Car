@@ -11,10 +11,22 @@
 
 static const char *TAG = "ESP_OUT";
 
-uint8_t mac_addr[ESP_NOW_ETH_ALEN] = {0xE4, 0x65, 0xB8, 0x75, 0xBB, 0x2C};
+uint8_t mac_addr[ESP_NOW_ETH_ALEN] = {0xe4, 0x65, 0xb8, 0x75, 0xbb, 0x2c};
+
+static void blink_LED(const gpio_num_t GPIO_NUM, const int count)
+{
+    for (int i = 0; i < count; i++)
+    {
+        gpio_set_level(GPIO_NUM, 1);
+        vTaskDelay(50);
+        gpio_set_level(GPIO_NUM, 0);
+        vTaskDelay(50);
+    }
+}
 
 void on_data_recv(const esp_now_recv_info_t * esp_now_info, const uint8_t *data, int data_len)
 {
+    blink_LED(GPIO_NUM_2, 2);
     const uint8_t *src_mac = esp_now_info->src_addr;
     ESP_LOGI(TAG, "Received %d bytes, from MAC %02X:%02X:%02X:%02X:%02X:%02X", 
         data_len, src_mac[0], src_mac[1], src_mac[2], src_mac[3], src_mac[4], src_mac[5]);
@@ -53,7 +65,7 @@ void init_esp_now(void)
 
     // add peers
     esp_now_peer_info_t peer = {
-        .channel = 0,
+        .channel = 1,
         .ifidx = WIFI_IF_STA,
         .encrypt = false
     };
@@ -71,9 +83,17 @@ void app_main(void)
         nvs_flash_init();
     }
 
+    gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
+
     // init wifi
     init_wifi();
 
     // init esp_now
     init_esp_now();
+
+    // Run the main processes to wait for callback
+    while (1)
+    {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
 }
