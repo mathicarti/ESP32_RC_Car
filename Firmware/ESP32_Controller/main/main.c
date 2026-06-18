@@ -49,8 +49,8 @@ static void init_esp_now(void)
     ESP_ERROR_CHECK(esp_now_init());
 
     // Register send/receive status callbacks
-    esp_now_send_cb_t(on_data_send);
-    esp_now_recv_cb_t(on_data_recv);
+    ESP_ERROR_CHECK(esp_now_register_send_cb(on_data_send));
+    ESP_ERROR_CHECK(esp_now_register_recv_cb(on_data_recv));
 
     // add peers
     esp_now_peer_info_t peer = {

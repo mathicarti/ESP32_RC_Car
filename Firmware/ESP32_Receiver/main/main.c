@@ -30,7 +30,7 @@ void on_data_recv(const esp_now_recv_info_t * esp_now_info, const uint8_t *data,
     const uint8_t *src_mac = esp_now_info->src_addr;
     ESP_LOGI(TAG, "Received %d bytes, from MAC %02X:%02X:%02X:%02X:%02X:%02X", 
         data_len, src_mac[0], src_mac[1], src_mac[2], src_mac[3], src_mac[4], src_mac[5]);
-    ESP_LOGI(TAG, "Recived data: %i", *data);
+    // ESP_LOGI(TAG, "Recived data: %s", *data);
 }
 
 void on_data_send(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
@@ -60,8 +60,8 @@ void init_esp_now(void)
     ESP_ERROR_CHECK(esp_now_init());
 
     // Set up the callbacks
-    esp_now_recv_cb_t(on_data_recv);
-    esp_now_send_cb_t(on_data_send);
+    ESP_ERROR_CHECK(esp_now_register_send_cb(on_data_send));
+    ESP_ERROR_CHECK(esp_now_register_recv_cb(on_data_recv));
 
     // add peers
     esp_now_peer_info_t peer = {
