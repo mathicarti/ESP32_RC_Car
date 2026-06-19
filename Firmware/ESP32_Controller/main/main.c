@@ -13,18 +13,28 @@ static void blink_LED(const gpio_num_t GPIO_NUM, const int count);
 
 static const char *TAG = "ESP_OUT";
 
+typedef struct data_packet
+{
+    uint8_t servo_angle; // 0 to 180 degrees
+    uint8_t esc_speed; // 0 to 100 percent
+    uint8_t command; // 0 -> NULL; 1 -> Controller; 2 -> Receiver
+} data_packet;
+
+data_packet rcv_packet = {1,1,1};
+
 static uint8_t peer_mac[ESP_NOW_ETH_ALEN] = {0xd8, 0xbc, 0x38, 0xfc, 0xb1, 0x78};
 
 void on_data_send(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
 {
-    ESP_LOGI(TAG, "Delivery Status: %s", tx_info->tx_status == WIFI_SEND_SUCCESS ? "Success" : "Fail");
+    bool tx_status = tx_info->tx_status == WIFI_SEND_SUCCESS ? true : false;
+    if (tx_status) blink_LED(GPIO_NUM_12, 2);
+    ESP_LOGI(TAG, "Delivery Status: %s", tx_status ? "Success" : "Fail");
 }
 
 void on_data_recv(const esp_now_recv_info_t * esp_now_info, const uint8_t *data, int data_len)
 {
-    const uint8_t *src_mac = esp_now_info->src_addr;
-    ESP_LOGI(TAG, "Received %d bytes, from MAC %02X:%02X:%02X:%02X:%02X:%02X", 
-        data_len, src_mac[0], src_mac[1], src_mac[2], src_mac[3], src_mac[4], src_mac[5]);
+    memcpy(&rcv_packet, data, data_len);
+    ESP_LOGI(TAG, "Rcv Packet: Command: %d, Servo Angle: %d, ESC Speed: %d", rcv_packet.command, rcv_packet.servo_angle, rcv_packet.esc_speed);
 }
 
 static void init_wifi(void)
@@ -80,32 +90,15 @@ void app_main(void)
 
     while (1)
     {
-        char *data = "23";
+        data_packet send = {
+            .servo_angle = 80,
+            .esc_speed = 10,
+            .command = 1
+        };
 
-        esp_err_t result = esp_now_send(peer_mac, (uint8_t *)&data, sizeof(data));
+        esp_err_t result = esp_now_send(peer_mac, (uint8_t *)&send, sizeof(send));
 
-        if (result == ESP_OK)
-        {
-            // ESP_LOGI(TAG, "Data sent awating callback");
-            blink_LED(GPIO_NUM_12, 2);
-        } else if (result == ESP_ERR_ESPNOW_ARG)
-        {
-            ESP_LOGE(TAG, "Invalide arguments passed");
-        } else if (result == ESP_ERR_ESPNOW_NOT_INIT)
-        {
-            ESP_LOGE(TAG, "ESP NOW not initialised properly");
-        } else if (result == ESP_ERR_ESPNOW_NOT_FOUND)
-        {
-            ESP_LOGE(TAG, "Couldn't find peer");
-        } else if (result == ESP_ERR_ESPNOW_IF)
-        {
-            ESP_LOGE(TAG, "WiFi interface mismatch");
-        } else if (result == ESP_ERR_ESPNOW_CHAN)
-        {
-            ESP_LOGE(TAG, "Peer on wrong channel");
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 

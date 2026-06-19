@@ -11,6 +11,16 @@
 
 static const char *TAG = "ESP_OUT";
 
+typedef struct data_packet
+{
+    uint8_t servo_angle; // 0 to 180 degrees
+    uint8_t esc_speed; // 0 to 100 percent
+    uint8_t command; // 0 -> NULL; 1 -> Controller; 2 -> Receiver
+} data_packet;
+
+data_packet current_data = {0,0,0};
+data_packet rcv_packet;
+
 uint8_t mac_addr[ESP_NOW_ETH_ALEN] = {0xe4, 0x65, 0xb8, 0x75, 0xbb, 0x2c};
 
 static void blink_LED(const gpio_num_t GPIO_NUM, const int count)
@@ -27,10 +37,9 @@ static void blink_LED(const gpio_num_t GPIO_NUM, const int count)
 void on_data_recv(const esp_now_recv_info_t * esp_now_info, const uint8_t *data, int data_len)
 {
     blink_LED(GPIO_NUM_2, 2);
-    const uint8_t *src_mac = esp_now_info->src_addr;
-    ESP_LOGI(TAG, "Received %d bytes, from MAC %02X:%02X:%02X:%02X:%02X:%02X", 
-        data_len, src_mac[0], src_mac[1], src_mac[2], src_mac[3], src_mac[4], src_mac[5]);
-    // ESP_LOGI(TAG, "Recived data: %s", *data);
+    // make it safe!
+    memcpy(&rcv_packet, data, data_len);
+    ESP_LOGI(TAG, "Ctrlr Packet: Command: %d, Servo Angle: %d, ESC Speed: %d", rcv_packet.command, rcv_packet.servo_angle, rcv_packet.esc_speed);
 }
 
 void on_data_send(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
@@ -94,6 +103,8 @@ void app_main(void)
     // Run the main processes to wait for callback
     while (1)
     {
-        vTaskDelay(pdMS_TO_TICKS(100));
+        esp_err_t result = esp_now_send(mac_addr, (uint8_t *)&current_data, sizeof(current_data));
+
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
