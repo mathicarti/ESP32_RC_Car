@@ -2,6 +2,7 @@
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "nvs_flash.h"
 #include "esp_event.h"
 #include "esp_wifi.h"
@@ -22,9 +23,11 @@ typedef struct data_packet
 } data_packet;
 
 data_packet current_data = {0,0,0};
-data_packet rcv_packet = {180, 0, 0};
+data_packet rcv_packet;
 
 uint8_t mac_addr[ESP_NOW_ETH_ALEN] = {0xe4, 0x65, 0xb8, 0x75, 0xbb, 0x2c};
+
+QueueHandle_t command_queue_handle = NULL;
 
 static void blink_LED(const gpio_num_t GPIO_NUM, const int count)
 {
@@ -39,15 +42,14 @@ static void blink_LED(const gpio_num_t GPIO_NUM, const int count)
 
 void on_data_recv(const esp_now_recv_info_t * esp_now_info, const uint8_t *data, int data_len)
 {
-    blink_LED(GPIO_NUM_2, 2);
-    // make it safe!
     memcpy(&rcv_packet, data, data_len);
-    ESP_LOGI(TAG, "Ctrlr Packet: Command: %d, Servo Angle: %d, ESC Speed: %d", rcv_packet.command, rcv_packet.servo_angle, rcv_packet.esc_speed);
+    xQueueSend(command_queue_handle, &rcv_packet, 0);
 }
 
 void on_data_send(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
 {
-    ESP_LOGI(TAG, "Delivery Status: %s", tx_info->tx_status == WIFI_SEND_SUCCESS ? "Success" : "Fail");
+    // ESP_LOGI(TAG, "Delivery Status: %s", tx_info->tx_status == WIFI_SEND_SUCCESS ? "Success" : "Fail");
+    ;
 }
 
 void init_wifi(void)
@@ -119,10 +121,14 @@ void servo_PWM_task(void *pvParameters)
 
     while (1)
     {
-        // need to change from rcv_packet to current but haven't implemented it yet
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, angle_to_duty(rcv_packet.servo_angle));
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
-        vTaskDelay(10);
+        // Retrieve what command is in the queue (will be changed for a mutex) and copy it to its own buffer 
+        // to servo pos.
+        if (xQueueReceive(command_queue_handle, &current_data, portMAX_DELAY) == pdPASS)
+        {
+            ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, angle_to_duty(current_data.servo_angle));
+            ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+            vTaskDelay(10);
+        }
     }
 }
 
@@ -153,6 +159,14 @@ void app_main(void)
     }
 
     gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
+
+    // Start Queue to store commands up to 10 structs
+    command_queue_handle = xQueueCreate(10, sizeof(data_packet));
+    if (command_queue_handle == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to init queue");
+        return;
+    }
 
     // need to make some freeRTOS tasks as this is getting tricky
     xTaskCreate(esp_now_data_task, "ESP NOW", 2048, NULL, 3, NULL);
