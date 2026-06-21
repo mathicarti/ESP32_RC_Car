@@ -3,6 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "nvs_flash.h"
 #include "esp_event.h"
 #include "esp_wifi.h"
@@ -15,35 +16,36 @@
 
 static const char *TAG = "ESP_OUT";
 
-typedef struct data_packet
+typedef struct
 {
     uint8_t servo_angle; // 0 to 180 degrees
     uint8_t esc_speed; // 0 to 100 percent
-    uint8_t command; // 0 -> NULL; 1 -> Controller; 2 -> Receiver
+    uint8_t command; // Will add functionality later (probably for)
 } data_packet;
 
-data_packet current_data = {0,0,0};
-data_packet rcv_packet;
+data_packet new_send_data;
+// Global var.
+data_packet new_data_buffer;
+
+typedef struct
+{
+    uint8_t servo_angle;
+    uint8_t esc_speed;
+} PWM_data;
+
+// Global var.
+PWM_data new_PWM;
 
 uint8_t mac_addr[ESP_NOW_ETH_ALEN] = {0xe4, 0x65, 0xb8, 0x75, 0xbb, 0x2c};
 
 QueueHandle_t command_queue_handle = NULL;
-
-static void blink_LED(const gpio_num_t GPIO_NUM, const int count)
-{
-    for (int i = 0; i < count; i++)
-    {
-        gpio_set_level(GPIO_NUM, 1);
-        vTaskDelay(50);
-        gpio_set_level(GPIO_NUM, 0);
-        vTaskDelay(50);
-    }
-}
+SemaphoreHandle_t PWM_data_mutex_handle = NULL;
 
 void on_data_recv(const esp_now_recv_info_t * esp_now_info, const uint8_t *data, int data_len)
 {
-    memcpy(&rcv_packet, data, data_len);
-    xQueueSend(command_queue_handle, &rcv_packet, 0);
+    // Copy new data into a buffer and add it to the queue
+    memcpy(&new_data_buffer, data, data_len);
+    xQueueSend(command_queue_handle, &new_data_buffer, 0);
 }
 
 void on_data_send(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
@@ -87,6 +89,34 @@ void init_esp_now(void)
     esp_now_add_peer(&peer);
 }
 
+void esp_now_send_data_task(void *pvParameters)
+{
+    // init wifi
+    init_wifi();
+
+    // init esp_now
+    init_esp_now();
+
+    data_packet current_send_data = {0,0,0};
+
+    // Run the main processes to wait for callback
+    for (;;)
+    {
+        // Check if it can access new_send_data for 10 ms
+        BaseType_t mutex_result = xSemaphoreTake(PWM_data_mutex_handle, 10);
+        if (mutex_result  == pdPASS)
+        {
+            current_send_data = new_send_data;
+
+            xSemaphoreGive(PWM_data_mutex_handle);
+        } 
+        else ESP_LOGW(TAG, "ESP SEND Counldn't get a hold of the mutex");
+
+        esp_now_send(mac_addr, (uint8_t *)&current_send_data, sizeof(current_send_data));
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
 uint32_t angle_to_duty(uint8_t angle)
 {
     if (angle > 180) angle = 180;
@@ -97,7 +127,7 @@ uint32_t angle_to_duty(uint8_t angle)
     return duty;
 }
 
-void servo_PWM_task(void *pvParameters)
+void PWM_task(void *pvParameters)
 {
     // init PWM for servo (id 0) and esc (id 1)
     ledc_timer_config_t led_timer = {
@@ -119,32 +149,49 @@ void servo_PWM_task(void *pvParameters)
     };
     ledc_channel_config(&ledc_channel);
 
-    while (1)
+    PWM_data current_PWM = {0,0};
+
+    for (;;)
     {
-        // Retrieve what command is in the queue (will be changed for a mutex) and copy it to its own buffer 
-        // to servo pos.
-        if (xQueueReceive(command_queue_handle, &current_data, portMAX_DELAY) == pdPASS)
+        // check if able to update current angles and update them
+        BaseType_t mutex_result = xSemaphoreTake(PWM_data_mutex_handle, 0);
+        if (mutex_result  == pdPASS)
         {
-            ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, angle_to_duty(current_data.servo_angle));
-            ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
-            vTaskDelay(10);
-        }
+            current_PWM = new_PWM;
+
+            xSemaphoreGive(PWM_data_mutex_handle);
+        } 
+        else ESP_LOGW(TAG, "PWM Counldn't get a hold of the mutex");
+
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, angle_to_duty(current_PWM.servo_angle));
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+        vTaskDelay(50);
     }
 }
 
-void esp_now_data_task(void *pvParameters)
+void update_data(void *pvParameters)
 {
-    // init wifi
-    init_wifi();
+    data_packet buffer_data;
 
-    // init esp_now
-    init_esp_now();
-
-    // Run the main processes to wait for callback
-    while (1)
+    for (;;)
     {
-        esp_err_t result = esp_now_send(mac_addr, (uint8_t *)&current_data, sizeof(current_data));
-        vTaskDelay(pdMS_TO_TICKS(500));
+        // Wait till data added to queue
+        if (xQueueReceive(command_queue_handle, &buffer_data, portMAX_DELAY) == pdPASS)
+        {
+            // TODO parse the custom command
+
+            // Ensure no data write/reads are being performed
+            xSemaphoreTake(PWM_data_mutex_handle, portMAX_DELAY);
+            
+            // Update PWM angles
+            new_PWM.servo_angle = buffer_data.servo_angle;
+            new_PWM.esc_speed = buffer_data.esc_speed;
+
+            // Update new_send_data
+            new_send_data = buffer_data;
+
+            xSemaphoreGive(PWM_data_mutex_handle);
+        }
     }
 }
 
@@ -158,8 +205,6 @@ void app_main(void)
         nvs_flash_init();
     }
 
-    gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
-
     // Start Queue to store commands up to 10 structs
     command_queue_handle = xQueueCreate(10, sizeof(data_packet));
     if (command_queue_handle == NULL)
@@ -168,7 +213,16 @@ void app_main(void)
         return;
     }
 
+    // Start mutex that the PWM will access
+    PWM_data_mutex_handle = xSemaphoreCreateMutex();
+    if (PWM_data_mutex_handle == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to init mutex");
+        return;
+    }
+
     // need to make some freeRTOS tasks as this is getting tricky
-    xTaskCreate(esp_now_data_task, "ESP NOW", 2048, NULL, 3, NULL);
-    xTaskCreate(servo_PWM_task, "Servo PWM", 2048, NULL, 5, NULL);
+    xTaskCreate(esp_now_send_data_task, "ESP NOW", 4096, NULL, 3, NULL);
+    xTaskCreate(PWM_task, "Servo PWM", 4096, NULL, 5, NULL);
+    xTaskCreate(update_data, "Command Parser", 4096, NULL, 4, NULL);
 }
