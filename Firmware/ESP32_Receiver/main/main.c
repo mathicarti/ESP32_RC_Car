@@ -24,8 +24,6 @@ typedef struct
 } data_packet;
 
 data_packet new_send_data;
-// Global var.
-data_packet new_data_buffer;
 
 typedef struct
 {
@@ -33,19 +31,21 @@ typedef struct
     uint8_t esc_speed;
 } PWM_data;
 
-// Global var.
 PWM_data new_PWM;
 
 uint8_t mac_addr[ESP_NOW_ETH_ALEN] = {0xe4, 0x65, 0xb8, 0x75, 0xbb, 0x2c};
 
 QueueHandle_t command_queue_handle = NULL;
 SemaphoreHandle_t PWM_data_mutex_handle = NULL;
+SemaphoreHandle_t send_data_mutex_handle = NULL;
 
 void on_data_recv(const esp_now_recv_info_t * esp_now_info, const uint8_t *data, int data_len)
 {
+    data_packet recv_data_buffer;
+
     // Copy new data into a buffer and add it to the queue
-    memcpy(&new_data_buffer, data, data_len);
-    xQueueSend(command_queue_handle, &new_data_buffer, 0);
+    memcpy(&recv_data_buffer, data, data_len);
+    xQueueSend(command_queue_handle, &recv_data_buffer, 0);
 }
 
 void on_data_send(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
@@ -103,12 +103,12 @@ void esp_now_send_data_task(void *pvParameters)
     for (;;)
     {
         // Check if it can access new_send_data for 10 ms
-        BaseType_t mutex_result = xSemaphoreTake(PWM_data_mutex_handle, 10);
+        BaseType_t mutex_result = xSemaphoreTake(send_data_mutex_handle, 10);
         if (mutex_result  == pdPASS)
         {
             current_send_data = new_send_data;
 
-            xSemaphoreGive(PWM_data_mutex_handle);
+            xSemaphoreGive(send_data_mutex_handle);
         } 
         else ESP_LOGW(TAG, "ESP SEND Counldn't get a hold of the mutex");
 
@@ -171,26 +171,31 @@ void PWM_task(void *pvParameters)
 
 void update_data(void *pvParameters)
 {
-    data_packet buffer_data;
+    data_packet data_buffer;
+    data_packet new_send_data_buffer;
+    PWM_data new_PWM_buffer;
 
     for (;;)
     {
         // Wait till data added to queue
-        if (xQueueReceive(command_queue_handle, &buffer_data, portMAX_DELAY) == pdPASS)
+        if (xQueueReceive(command_queue_handle, &data_buffer, portMAX_DELAY) == pdPASS)
         {
             // TODO parse the custom command
+            new_PWM_buffer.servo_angle = data_buffer.servo_angle;
+            new_PWM_buffer.esc_speed = data_buffer.esc_speed;
+
+            new_send_data_buffer = data_buffer;
 
             // Ensure no data write/reads are being performed
             xSemaphoreTake(PWM_data_mutex_handle, portMAX_DELAY);
-            
             // Update PWM angles
-            new_PWM.servo_angle = buffer_data.servo_angle;
-            new_PWM.esc_speed = buffer_data.esc_speed;
-
-            // Update new_send_data
-            new_send_data = buffer_data;
-
+            new_PWM = new_PWM_buffer;
             xSemaphoreGive(PWM_data_mutex_handle);
+
+            xSemaphoreTake(send_data_mutex_handle, portMAX_DELAY);
+            // Update new_send_data
+            new_send_data = new_send_data_buffer;
+            xSemaphoreGive(send_data_mutex_handle);
         }
     }
 }
@@ -213,11 +218,19 @@ void app_main(void)
         return;
     }
 
-    // Start mutex that the PWM will access
+    // Start mutex that PWM will access
     PWM_data_mutex_handle = xSemaphoreCreateMutex();
     if (PWM_data_mutex_handle == NULL)
     {
-        ESP_LOGE(TAG, "Failed to init mutex");
+        ESP_LOGE(TAG, "Failed to init PWM_data mutex");
+        return;
+    }
+
+    // Start mutex that esp_send_data will access
+    send_data_mutex_handle = xSemaphoreCreateMutex();
+    if (send_data_mutex_handle == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to init send_data mutex");
         return;
     }
 
